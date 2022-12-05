@@ -71,20 +71,28 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
-static bool
-priority_greater (const struct list_elem *a_, const struct list_elem *b_,
-            void *aux UNUSED) 
+bool
+thread_priority_greater (const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED) 
 {
   const struct thread *a = list_entry (a_, struct thread, elem);
   const struct thread *b = list_entry (b_, struct thread, elem);
   
- return a->priority > b->priority;
+  return a->priority > b->priority;
+}
+
+bool
+lock_priority_greater (const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED) 
+{
+  const struct lock *a = list_entry (a_, struct lock, elem);
+  const struct lock *b = list_entry (b_, struct lock, elem);
+  
+  return a->max_priority > b->max_priority;
 }
 
 static void
 insert_ready_thread (struct thread *t)
 {
-  list_insert_ordered(&ready_list, &t->elem, priority_greater, NULL);
+  list_insert_ordered(&ready_list, &t->elem, thread_priority_greater, NULL);
   t->status = THREAD_READY;
 }
 
@@ -359,7 +367,16 @@ void
 thread_set_priority (int new_priority) 
 {
   struct thread *t = thread_current ();
+  t->base_priority = new_priority;
   t->priority = new_priority;
+  if (!list_empty(&t->locks_acquired))
+  {
+    struct list_elem *e = list_min(&t->locks_acquired, lock_priority_greater, NULL);
+    const struct lock *lock = list_entry (e, struct lock, elem);
+    if (lock->max_priority > t->priority)
+      t->priority = lock->max_priority;
+  }
+
   thread_yield();
 }
 
@@ -486,7 +503,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
+  t->base_priority = priority;
   t->priority = priority;
+  list_init(&t->locks_acquired);
+  list_init(&t->locks_waiting);
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
