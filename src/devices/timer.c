@@ -117,6 +117,10 @@ timer_sleep (int64_t ticks)
     PANIC ("Failed to allocate memory for sleep_thread");
   sleep_thread->t = cur;
   sleep_thread->ticks = ticks;
+  /**
+   * We don't need to sort sleeped threads by priority.
+   * It already does in `thread_unblock`.
+   */
   list_push_back (&sleep_thread_list, &sleep_thread->elem);
 
   thread_block();
@@ -208,6 +212,8 @@ timer_interrupt (struct intr_frame *args UNUSED)
     {
       thread_unblock(st->t);
       e = list_remove(e);
+      if (st->t->priority > thread_current()->priority)
+        intr_yield_on_return();
     }
     else
     {
