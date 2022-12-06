@@ -227,8 +227,11 @@ thread_create (const char *name, int priority,
   thread_unblock (t);
 
   /* Yield if it needs */
-  if (priority > thread_current()->priority)
-    thread_yield();
+  if (!thread_mlfqs)
+  {
+    if (priority > thread_current()->priority)
+      thread_yield();
+  }
 
   return tid;
 }
@@ -366,6 +369,8 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  if (thread_mlfqs)
+    return;
   struct thread *t = thread_current ();
   t->base_priority = new_priority;
   t->priority = new_priority;
@@ -496,15 +501,18 @@ init_thread (struct thread *t, const char *name, int priority)
   enum intr_level old_level;
 
   ASSERT (t != NULL);
-  ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
   ASSERT (name != NULL);
 
   memset (t, 0, sizeof *t);
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->base_priority = priority;
-  t->priority = priority;
+  if (!thread_mlfqs)
+  {
+    ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
+    t->base_priority = priority;
+    t->priority = priority;
+  }
   list_init(&t->locks_acquired);
   t->lock_waiting = NULL;
   t->magic = THREAD_MAGIC;
