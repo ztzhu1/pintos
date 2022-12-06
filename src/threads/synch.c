@@ -32,6 +32,8 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+#define NESTING_DEPTH 8
+
 /** Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -187,26 +189,21 @@ lock_init (struct lock *lock)
   ASSERT (lock != NULL);
 
   lock->holder = NULL;
-  lock->max_priority = 0;
+  lock->max_priority = PRI_MIN;
   sema_init (&lock->semaphore, 1);
 }
 
-static void
-update_priority(struct lock *lock, struct thread *holder, struct thread *acquirer)
+static struct lock *
+update_priority(struct lock *lock, struct thread *acquirer)
 {
-  if (holder)
+  struct thread *holder = lock->holder;
+  if (holder->priority < acquirer->priority)
   {
-    if (holder->priority < acquirer->priority)
-    {
-      holder->priority = acquirer->priority;
-      lock->max_priority = acquirer->priority;
-    }
-  }
-  else
-  {
+    holder->priority = acquirer->priority;
     lock->max_priority = acquirer->priority;
+    return holder->lock_waiting;
   }
-
+  return NULL;
 }
 /** Acquires LOCK, sleeping until it becomes available if
    necessary.  The lock must not already be held by the current
@@ -225,12 +222,23 @@ lock_acquire (struct lock *lock)
 
   struct thread *t_cur = thread_current();
   struct thread *t_holder = lock->holder;
-  // list_push_back(&t_cur->locks_waiting, &lock->elem);
-  update_priority(lock, t_holder, t_cur);
+  t_cur->lock_waiting = lock;
+
+  if (t_holder)
+  {
+    struct lock *lock_waiting = lock;
+    for (int i = 0; i < NESTING_DEPTH && lock_waiting; i++)
+    {
+      lock_waiting = update_priority(lock_waiting, t_cur);
+    }
+  }
+  else
+  {
+    lock->max_priority = t_cur->priority;
+  }
 
   sema_down (&lock->semaphore);
   lock->holder = t_cur;
-  // list_remove(&t_cur->locks_waiting);
   list_push_back(&t_cur->locks_acquired, &lock->elem);
 }
 
@@ -279,8 +287,9 @@ lock_release (struct lock *lock)
     else
       lock->holder->priority = lock->max_priority;
   }
+  thread_current()->lock_waiting = NULL;
   lock->holder = NULL;
-  lock->max_priority = 0;
+  lock->max_priority = PRI_MIN;
   sema_up (&lock->semaphore);
 }
 

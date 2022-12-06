@@ -90,7 +90,7 @@ struct thread
     int base_priority;
     int priority;                       /**< Priority. */
     struct list locks_acquired;
-    struct list locks_waiting;
+    struct lock *lock_waiting;
     struct list_elem allelem;           /**< List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
