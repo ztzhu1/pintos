@@ -7,6 +7,8 @@
 // #define Q 14
 #define F 16384 // 2**Q
 
+typedef int myfloat;
+
 #define INT_TO_FP(n) ((n) * F)
 #define FP_TO_INT_Z(x) ((x) / F) // rounding toward zero
 #define FP_TO_INT_N(x) ((x) >= 0 ? ((x) + F / 2) / F : ((x) - F / 2) / F) // rounding to nearest

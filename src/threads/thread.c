@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/fixed_point.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -36,6 +37,8 @@ static struct thread *initial_thread;
 
 /** Lock used by allocate_tid(). */
 static struct lock tid_lock;
+
+static int load_avg;
 
 /** Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
@@ -130,6 +133,7 @@ thread_init (void)
 void
 thread_start (void) 
 {
+  load_avg = 0;
   /* Create the idle thread. */
   struct semaphore idle_started;
   sema_init (&idle_started, 0);
@@ -365,6 +369,40 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
+void
+thread_update_mlfqs_priority (struct thread *t, void *aux UNUSED)
+{
+  if (t == idle_thread)
+    return;
+
+  t->priority = FP_TO_INT_N(INT_TO_FP(PRI_MAX) - MUL_FP_INT(DIV_FP_FP(INT_TO_FP(1), INT_TO_FP(4)), t->recent_cpu) - MUL_FP_INT(INT_TO_FP(2), t->nice));
+
+  if (t->priority > PRI_MAX)
+    t->priority = PRI_MAX;
+  else if (t->priority < PRI_MIN)
+    t->priority = PRI_MIN;
+}
+
+void
+thread_update_recent_cpu (struct thread *t, void *aux UNUSED)
+{
+  if (t == idle_thread)
+    return;
+
+  myfloat tmp = MUL_FP_INT(INT_TO_FP(thread_get_load_avg()), 2);
+  t->recent_cpu = FP_TO_INT_N(ADD_FP_INT(MUL_FP_INT(DIV_FP_FP(tmp, ADD_FP_INT(tmp, 1)), t->recent_cpu), t->nice));
+}
+
+void
+update_load_avg ()
+{
+  int rl_size = list_size(&ready_list);
+  if (thread_current() != idle_thread)
+    rl_size++;
+  load_avg = FP_TO_INT_N(MUL_FP_INT(DIV_FP_FP(INT_TO_FP(59), INT_TO_FP(60)), load_avg) + DIV_FP_INT(INT_TO_FP(rl_size), 60));
+}
+
+
 /** Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
@@ -394,33 +432,30 @@ thread_get_priority (void)
 
 /** Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) 
+thread_set_nice (int nice) 
 {
-  /* Not yet implemented. */
+  thread_current()->nice = nice;
 }
 
 /** Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current()->nice;
 }
 
 /** Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return load_avg;
 }
 
 /** Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return FP_TO_INT_N(MUL_FP_INT(thread_current()->recent_cpu, 100));
 }
 
 /** Idle thread.  Executes when no other thread is ready to run.
@@ -512,6 +547,19 @@ init_thread (struct thread *t, const char *name, int priority)
     ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
     t->base_priority = priority;
     t->priority = priority;
+  }
+  else
+  {
+    if (strcmp(name, "idle") == 0)
+    {
+      t->nice = 0;
+      t->recent_cpu = 0;
+    }
+    else
+    {
+      t->nice = thread_current()->nice;
+      t->recent_cpu = thread_current()->recent_cpu;
+    }
   }
   list_init(&t->locks_acquired);
   t->lock_waiting = NULL;

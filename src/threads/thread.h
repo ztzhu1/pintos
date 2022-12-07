@@ -89,6 +89,8 @@ struct thread
     uint8_t *stack;                     /**< Saved stack pointer. */
     int base_priority;
     int priority;                       /**< Priority. */
+    int nice;
+    int recent_cpu;
     struct list locks_acquired;
     struct lock *lock_waiting;
     struct list_elem allelem;           /**< List element for all threads list. */
@@ -143,5 +145,8 @@ int thread_get_load_avg (void);
 
 bool thread_priority_greater (const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
 bool lock_priority_greater (const struct list_elem *a_, const struct list_elem *b_, void *aux UNUSED);
+void thread_update_mlfqs_priority (struct thread *t, void *aux UNUSED);
+void thread_update_recent_cpu (struct thread *t, void *aux UNUSED);
+void update_load_avg ();
 
 #endif /**< threads/thread.h */
