@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/malloc.h"
   
 /** See [8254] for hardware details of the 8254 timer chip. */
 
@@ -224,6 +225,11 @@ timer_interrupt (struct intr_frame *args UNUSED)
 
   if (thread_mlfqs)
   {
+    if (!current_is_idle())
+    {
+      thread_current()->recent_cpu += ITOF(1);
+    }
+
     if (ticks % 4 == 0)
       thread_foreach(thread_update_mlfqs_priority, NULL);
 
