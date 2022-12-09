@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/malloc.h"
   
 /** See [8254] for hardware details of the 8254 timer chip. */
 
@@ -30,6 +31,16 @@ static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 
+struct sleep_thread
+{
+  struct list_elem elem;
+  struct thread *t;
+  int64_t ticks;
+};
+
+static struct list sleep_thread_list;
+
+
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
@@ -37,6 +48,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init(&sleep_thread_list);
 }
 
 /** Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,11 +101,33 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
-
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+
+  if (ticks < 0)
+    return;
+
+  // int64_t start = timer_ticks ();
+
+  // while (timer_elapsed (start) < ticks) 
+  //   thread_yield ();
+
+  enum intr_level old_level = intr_disable ();
+
+  struct thread *cur = thread_current ();
+  struct sleep_thread *sleep_thread = malloc (sizeof *sleep_thread);
+  if (sleep_thread == NULL)
+    PANIC ("Failed to allocate memory for sleep_thread");
+  sleep_thread->t = cur;
+  sleep_thread->ticks = ticks;
+  /**
+   * We don't need to sort sleeped threads by priority.
+   * It already does in `thread_unblock`.
+   */
+  list_push_back (&sleep_thread_list, &sleep_thread->elem);
+
+  thread_block();
+
+  intr_set_level (old_level);
 }
 
 /** Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -171,6 +205,41 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+
+  struct list_elem *e;
+  for (e = list_begin (&sleep_thread_list); e != list_end (&sleep_thread_list);)
+  {
+    struct sleep_thread *st = list_entry (e, struct sleep_thread, elem);
+    if (--(st->ticks) <= 0)
+    {
+      thread_unblock(st->t);
+      e = list_remove(e);
+      if (st->t->priority > thread_current()->priority)
+        intr_yield_on_return();
+    }
+    else
+    {
+      e = list_next (e);
+    }
+  }
+
+  if (thread_mlfqs)
+  {
+    if (!current_is_idle())
+    {
+      thread_current()->recent_cpu += ITOF(1);
+    }
+
+    if (ticks % 4 == 0)
+      thread_foreach(thread_update_mlfqs_priority, NULL);
+
+    if (ticks % TIMER_FREQ == 0)
+    {
+      update_load_avg();
+      thread_foreach(thread_update_recent_cpu, NULL);
+    }
+  }
+
   thread_tick ();
 }
 
