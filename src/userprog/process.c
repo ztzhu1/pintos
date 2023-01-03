@@ -26,7 +26,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *file_name_and_args) 
 {
   char *fn_copy;
   tid_t tid;
@@ -36,7 +36,10 @@ process_execute (const char *file_name)
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  strlcpy (fn_copy, file_name_and_args, PGSIZE);
+
+  char *file_name, *save_ptr;
+  file_name = strtok_r (file_name_and_args, " ", &save_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
@@ -48,11 +51,13 @@ process_execute (const char *file_name)
 /** A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *file_name_and_args_)
 {
-  char *file_name = file_name_;
+  char *file_name_and_args = file_name_and_args_;
   struct intr_frame if_;
   bool success;
+  char *file_name, *save_ptr;
+  file_name = strtok_r (file_name_and_args, " ", &save_ptr);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -62,9 +67,62 @@ start_process (void *file_name_)
   success = load (file_name, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
+  // palloc_free_page (file_name_and_args);
   if (!success) 
     thread_exit ();
+
+  /**
+   * Copy argv
+   */
+  int argc = 0;
+  void *argv[128];
+  if_.esp = PHYS_BASE;
+  for (char *token = strtok_r (NULL, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)) {
+    size_t arg_len = strlen(token) + 1;
+    if_.esp -= arg_len;
+    memcpy(if_.esp, (void *)token, arg_len);
+    argv[argc++] = if_.esp;
+  }
+
+  /**
+   * Align
+   */
+  size_t align_size = 4 - ((intptr_t)PHYS_BASE - (intptr_t)if_.esp) % 4;
+  if_.esp = (void *)((intptr_t)if_.esp - align_size);
+  memset(if_.esp, 0, align_size);
+
+  /**
+   * The last argv is null
+   */
+  if_.esp -= sizeof (char *);
+  memset(if_.esp, 0, sizeof (char *));
+
+  /**
+   * argv address
+   */
+  for (int i = argc - 1; i >=0; i--) {
+    if_.esp -= sizeof (char *);
+    memcpy(if_.esp, (void *)&argv[i], sizeof (char *));
+  }
+
+  /**
+   * argv[0] address
+   */
+  void *argv_addr = if_.esp;
+  if_.esp -= sizeof (char **);
+  memcpy(if_.esp, argv_addr, sizeof (char **));
+
+  /**
+   * argc
+   */
+  if_.esp -= sizeof (int);
+  memcpy(if_.esp, (void *)argc, sizeof (int));
+
+  /**
+   * return address
+   */
+  if_.esp -= sizeof (intptr_t);
+  memset(if_.esp, 0, sizeof (intptr_t));
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
