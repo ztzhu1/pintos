@@ -55,6 +55,7 @@ static long long user_ticks;    /**< # of timer ticks in user programs. */
 /** Scheduling. */
 #define TIME_SLICE 4            /**< # of timer ticks to give each thread. */
 static unsigned thread_ticks;   /**< # of timer ticks since last yield. */
+static bool schedule_started = false;
 
 /** If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -132,6 +133,7 @@ thread_init (void)
 void
 thread_start (void) 
 {
+  schedule_started = true;
   load_avg = 0;
   /* Create the idle thread. */
   struct semaphore idle_started;
@@ -350,6 +352,8 @@ thread_exit (void)
 void
 thread_yield (void) 
 {
+  if (!schedule_started)
+    return;
   struct thread *cur = thread_current ();
   enum intr_level old_level;
   
