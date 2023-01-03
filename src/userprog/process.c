@@ -28,23 +28,28 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name_and_args) 
 {
-  char *fn_copy;
+  char *file_name_and_args_copy1, *file_name_and_args_copy2;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  file_name_and_args_copy1 = palloc_get_page (0);
+  file_name_and_args_copy2 = palloc_get_page (0);
+  if (file_name_and_args_copy1 == NULL
+      || file_name_and_args_copy2 == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name_and_args, PGSIZE);
+  strlcpy (file_name_and_args_copy1, file_name_and_args, PGSIZE);
+  strlcpy (file_name_and_args_copy2, file_name_and_args, PGSIZE);
 
   char *file_name, *save_ptr;
-  file_name = strtok_r (file_name_and_args, " ", &save_ptr);
+  file_name = strtok_r (file_name_and_args_copy1, " ", &save_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, file_name_and_args_copy2);
+  if (tid == TID_ERROR) {
+    palloc_free_page (file_name_and_args_copy1); 
+    palloc_free_page (file_name_and_args_copy2); 
+  }
   return tid;
 }
 
@@ -54,6 +59,9 @@ static void
 start_process (void *file_name_and_args_)
 {
   char *file_name_and_args = file_name_and_args_;
+  char *file_name_and_args_copy = palloc_get_page(0);
+  strlcpy(file_name_and_args_copy, file_name_and_args, PGSIZE);
+
   struct intr_frame if_;
   bool success;
   char *file_name, *save_ptr;
@@ -77,7 +85,7 @@ start_process (void *file_name_and_args_)
   int argc = 0;
   void *argv[128];
   if_.esp = PHYS_BASE;
-  for (char *token = strtok_r (NULL, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)) {
+  for (char *token = strtok_r (file_name_and_args_copy, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)) {
     size_t arg_len = strlen(token) + 1;
     if_.esp -= arg_len;
     memcpy(if_.esp, (void *)token, arg_len);
@@ -87,8 +95,8 @@ start_process (void *file_name_and_args_)
   /**
    * Align
    */
-  size_t align_size = 4 - ((intptr_t)PHYS_BASE - (intptr_t)if_.esp) % 4;
-  if_.esp = (void *)((intptr_t)if_.esp - align_size);
+  size_t align_size = (uintptr_t)if_.esp % 4;
+  if_.esp = (void *)((uintptr_t)if_.esp - align_size);
   memset(if_.esp, 0, align_size);
 
   /**
@@ -116,7 +124,7 @@ start_process (void *file_name_and_args_)
    * argc
    */
   if_.esp -= sizeof (int);
-  memcpy(if_.esp, (void *)argc, sizeof (int));
+  *(int *)if_.esp = argc;
 
   /**
    * return address
