@@ -368,6 +368,18 @@ thread_yield (void)
   intr_set_level (old_level);
 }
 
+int thread_dead(tid_t tid)
+{
+  struct list_elem *e;
+  for (e = list_begin (&all_list); e != list_end (&all_list);
+       e = list_next (e))
+  {
+    struct thread *t = list_entry (e, struct thread, allelem);
+    if (t->tid == tid) return 0;
+  }
+  return 1;
+}
+
 /** Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
 void
@@ -572,6 +584,14 @@ init_thread (struct thread *t, const char *name, int priority)
   }
   list_init(&t->locks_acquired);
   t->lock_waiting = NULL;
+  
+  list_init(&t->child_list); // as_child initialization will be done later, see thread_create()
+  
+  sema_init(&t->sema_exec, 0);
+  t->exec_success = false;
+
+  list_init(&t->file_list);
+  t->next_fd = 2;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();

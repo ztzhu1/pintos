@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 #include "threads/fixed_point.h"
 
 /** States in a thread's life cycle. */
@@ -24,6 +25,8 @@ typedef int tid_t;
 #define PRI_MIN 0                       /**< Lowest priority. */
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
+
+struct child_entry;
 
 /** A kernel thread or user process.
 
@@ -94,6 +97,7 @@ struct thread
     myfp recent_cpu;
     struct list locks_acquired;
     struct lock *lock_waiting;
+    int exit_code;
     struct list_elem allelem;           /**< List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
@@ -104,9 +108,45 @@ struct thread
     uint32_t *pagedir;                  /**< Page directory. */
 #endif
 
+    struct thread *parent;              /**< Thread's parent. */
+    struct list child_list;             /**< Thread's children. Member type is child_entry. */
+    struct child_entry *as_child;       /**< Thread itself's child_entry. This will be added 
+                                           to its parent's child_list and is heap-allocated 
+                                           so that it lives after the thread dies. */
+  
+    struct semaphore sema_exec;         /**< Semaphore for executing (spawning) a new process. 
+                                           "UPed" after knowing whether the child has loaded 
+                                           its executable successfully. */
+    bool exec_success;                  /**< Whether new process successfully loaded its executable. */
+
+    struct file *exec_file;             /**< The executable file loaded by the thread. Opened upon*/
+    struct list file_list;              /**< Files opened by the thread. Member type is file_entry. */
+    int next_fd;                        /**< Next file descriptor to be allocated.
+                                           Start from 2 (0=STDIN, 1=STDOUT). */
+
     /* Owned by thread.c. */
     unsigned magic;                     /**< Detects stack overflow. */
   };
+
+/** Information of a thread's child */
+struct child_entry
+{
+  tid_t tid;                          /**< Child's tid. */
+  struct thread *t;                   /**< Pointer to child thread. */
+  bool is_alive;                      /**< Whether the child is still running. */
+  int exit_code;                      /**< Child's exit code. */
+  bool is_waiting_on;                 /**< Whether the parent is waiting on the child. */
+  struct semaphore wait_sema;         /**< Semaphore to let parent wait on the child. */
+  struct list_elem elem;
+};
+
+/** Information of a thread's opened file */
+struct file_entry
+{
+  int fd;                             /**< File descriptor. */
+  struct file *f;                     /**< Pointer to file. */
+  struct list_elem elem;
+};
 
 /** If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -131,6 +171,7 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
+int thread_dead(tid_t tid);
 
 /** Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);

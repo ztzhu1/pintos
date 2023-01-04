@@ -72,12 +72,21 @@ start_process (void *file_name_and_args_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+
+  lock_acquire(&filesys_lock);
   success = load (file_name, &if_.eip, &if_.esp);
+  lock_release(&filesys_lock);
 
   /* If load failed, quit. */
-  // palloc_free_page (file_name_and_args);
-  if (!success) 
+  if (!success) {
+    palloc_free_page(file_name_and_args);
+    palloc_free_page(file_name_and_args_copy);
+
+    thread_current()->as_child->is_alive = false;
+    thread_current()->exit_code = -1;
+    sema_up(&thread_current()->parent->sema_exec);
     thread_exit ();
+  }
 
   /**
    * Copy argv
@@ -132,6 +141,18 @@ start_process (void *file_name_and_args_)
   if_.esp -= sizeof (intptr_t);
   memset(if_.esp, 0, sizeof (intptr_t));
 
+  lock_acquire(&filesys_lock);
+  struct file *f = filesys_open(file_name_and_args);
+  file_deny_write(f);
+  lock_release(&filesys_lock);
+  thread_current()->exec_file = f;
+
+  palloc_free_page(file_name_and_args);
+  palloc_free_page(file_name_and_args_copy);
+
+  thread_current()->parent->exec_success = 1;
+  sema_up(&thread_current()->parent->sema_exec);
+
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -152,9 +173,30 @@ start_process (void *file_name_and_args_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  return -1;
+  struct thread *t_cur = thread_current();
+  
+  struct list_elem *e;
+  for (e = list_begin (&t_cur->child_list); e != list_end (&t_cur->child_list);
+       e = list_next (e))
+  {
+    struct child_entry *entry = list_entry(e, struct child_entry, elem);
+    if (entry->tid == child_tid) {
+      if (!entry->is_waiting_on && entry->is_alive) {
+        entry->is_waiting_on = true;
+        sema_down(&entry->wait_sema); // wait for child process to exit
+        return entry->exit_code;
+      }
+      else if (entry->is_waiting_on) { // already waiting on child
+        return -1;
+      }
+      else { // child has terminated, retrieve exit_code
+        return entry->exit_code;
+      }
+    }
+  }
+  return -1; // child_tid is not a child of current process
 }
 
 /** Free the current process's resources. */
@@ -163,6 +205,11 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  // close the executable file
+  lock_acquire(&filesys_lock);
+  file_close(cur->exec_file);
+  lock_release(&filesys_lock);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
